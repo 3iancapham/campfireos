@@ -12,6 +12,10 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  return <Layout>{children}</Layout>
+  return (
+    <div className="relative min-h-screen">
+      <Layout>{children}</Layout>
+    </div>
+  )
 }
 

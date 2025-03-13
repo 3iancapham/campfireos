@@ -24,7 +24,14 @@ import {
   FileText,
   Megaphone,
   Loader2,
+  RefreshCw,
 } from "lucide-react"
+import { doc, getDoc, setDoc } from "firebase/firestore"
+import { db } from "@/lib/firebase"
+import { useAuth } from "@/components/providers/auth"
+import { useUserData } from '@/lib/hooks/useUserData'
+import { LoadingSpinner } from '@/components/ui/loading-spinner'
+import { generateStrategy } from '@/lib/anthropic'
 
 type UserStrategy = {
   mainTopic: string
@@ -74,27 +81,75 @@ type ContentTheme = {
 
 export default function StrategyPage() {
   const router = useRouter()
+  const { user, loading: authLoading } = useAuth()
+  const { userData, loading: dataLoading, error, updateStrategy } = useUserData()
   const [strategy, setStrategy] = useState<UserStrategy | null>(null)
   const [contentPlan, setContentPlan] = useState<ContentPlan | null>(null)
-  const [loading, setLoading] = useState(true)
   const [generatingPlan, setGeneratingPlan] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
 
+  // If not authenticated, redirect to login
   useEffect(() => {
-    // In a real app, this would be fetched from an API
-    const savedStrategy = localStorage.getItem("userStrategy")
-    if (savedStrategy) {
-      setStrategy(JSON.parse(savedStrategy))
+    if (!authLoading && !user) {
+      router.push('/login')
+    }
+  }, [authLoading, user, router])
+
+  useEffect(() => {
+    const checkAndGenerateStrategy = async () => {
+      try {
+        // Check for onboarding survey
+        const onboardingSurvey = localStorage.getItem("onboardingSurvey")
+        if (!onboardingSurvey) {
+          router.push("/onboarding")
+          return
+        }
+
+        // If we don't have a strategy yet, generate one
+        if (!userData?.strategy) {
+          setGeneratingPlan(true)
+          const surveyData = JSON.parse(onboardingSurvey)
+          const generatedStrategy = await generateStrategy(surveyData)
+          
+          // Store the strategy
+          await updateStrategy(generatedStrategy)
+          setStrategy(generatedStrategy)
+        } else {
+          setStrategy(userData.strategy)
+        }
+
+        // Load content plan if it exists
+        const savedContentPlan = localStorage.getItem("contentPlan")
+        if (savedContentPlan) {
+          setContentPlan(JSON.parse(savedContentPlan))
+        }
+      } catch (error) {
+        console.error("Error generating/loading strategy:", error)
+      } finally {
+        setGeneratingPlan(false)
+      }
     }
 
-    // Check if we already have a content plan
-    const savedContentPlan = localStorage.getItem("contentPlan")
-    if (savedContentPlan) {
-      setContentPlan(JSON.parse(savedContentPlan))
+    if (!dataLoading && userData) {
+      checkAndGenerateStrategy()
     }
+  }, [dataLoading, userData, router, updateStrategy])
 
-    setLoading(false)
-  }, [])
+  // Initial loading state
+  if (authLoading || dataLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen">
+        <div className="relative mb-8">
+          <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping"></div>
+          <Loader2 className="h-16 w-16 text-primary animate-spin relative z-10" />
+        </div>
+        <h1 className="text-2xl font-bold mb-2">Loading...</h1>
+        <p className="text-muted-foreground max-w-md mb-8 text-center">
+          Loading your strategy...
+        </p>
+      </div>
+    )
+  }
 
   const startOnboarding = () => {
     router.push("/onboarding")
@@ -322,32 +377,37 @@ export default function StrategyPage() {
     })
   }
 
-  if (loading) {
-    return <div className="p-8">Loading your strategy...</div>
-  }
-
-  if (!strategy) {
+  if (error) {
     return (
-      <div className="max-w-4xl mx-auto p-8">
-        <h1 className="text-2xl font-bold mb-4">Your Social Media Strategy</h1>
-        <Card>
-          <CardContent className="p-8 text-center">
-            <div className="mb-4">
-              <Target className="h-12 w-12 mx-auto text-muted-foreground" />
-            </div>
-            <h2 className="text-xl font-medium mb-2">No strategy found</h2>
-            <p className="text-muted-foreground mb-6">
-              Complete the onboarding process to generate your personalized social media strategy.
-            </p>
-            <Button onClick={startOnboarding}>Complete Onboarding</Button>
-          </CardContent>
-        </Card>
+      <div className="flex h-screen items-center justify-center">
+        <p className="text-red-500">Error loading strategy: {error}</p>
       </div>
     )
   }
 
+  if (!userData?.strategy) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="text-center">
+          <h2 className="mb-4 text-2xl font-bold">No Strategy Found</h2>
+          <p className="mb-4 text-gray-600">
+            Please complete the onboarding process to generate your strategy.
+          </p>
+          <Button
+            onClick={() => router.push('/onboarding')}
+            className="bg-blue-500 hover:bg-blue-600 text-white"
+          >
+            Go to Onboarding
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  const { strategy: userStrategy } = userData
+
   // Format the date
-  const formattedDate = new Date(strategy.generatedAt).toLocaleDateString("en-US", {
+  const formattedDate = new Date(userStrategy.generatedAt).toLocaleDateString("en-US", {
     year: "numeric",
     month: "long",
     day: "numeric",
@@ -395,9 +455,9 @@ export default function StrategyPage() {
 
   // Generate platform recommendations based on niche and audience
   const getPlatformRecommendations = () => {
-    const topic = strategy.mainTopic.toLowerCase()
-    const subTopic = strategy.subTopic.toLowerCase()
-    const audience = strategy.targetAudience
+    const topic = userStrategy.mainTopic.toLowerCase()
+    const subTopic = userStrategy.subTopic.toLowerCase()
+    const audience = userStrategy.targetAudience
 
     // Base recommendations on topic
     const recommendations: Record<string, string[]> = {
@@ -489,9 +549,9 @@ export default function StrategyPage() {
 
   // Generate content ideas based on niche, audience, and goal
   const getContentIdeas = () => {
-    const topic = strategy.mainTopic.toLowerCase()
-    const subTopic = strategy.subTopic.toLowerCase()
-    const goal = strategy.goal.toLowerCase()
+    const topic = userStrategy.mainTopic.toLowerCase()
+    const subTopic = userStrategy.subTopic.toLowerCase()
+    const goal = userStrategy.goal.toLowerCase()
 
     const ideas = [
       `"Day in the life" content showing behind-the-scenes of your ${topic} work`,
@@ -549,28 +609,28 @@ export default function StrategyPage() {
     const recommendations = []
 
     // Based on goal
-    if (strategy.goal === "product") {
+    if (userStrategy.goal === "product") {
       recommendations.push(
         "Focus on visual content that showcases your products in action",
         "Create tutorials and how-to content that demonstrates product value",
         "Implement a consistent product release calendar with teasers and launches",
         "Leverage user-generated content showing your products in use",
       )
-    } else if (strategy.goal === "service") {
+    } else if (userStrategy.goal === "service") {
       recommendations.push(
         "Share client success stories and testimonials regularly",
         "Create educational content that establishes your expertise",
         "Develop a lead generation funnel with valuable free content",
         "Host live Q&A sessions to address potential client questions",
       )
-    } else if (strategy.goal === "awareness") {
+    } else if (userStrategy.goal === "awareness") {
       recommendations.push(
         "Collaborate with complementary creators and brands",
         "Create shareable, educational infographics and carousel posts",
         "Participate actively in relevant community discussions",
         "Develop a consistent brand voice and visual identity",
       )
-    } else if (strategy.goal === "community") {
+    } else if (userStrategy.goal === "community") {
       recommendations.push(
         "Create interactive content that encourages audience participation",
         "Establish regular community events or challenges",
@@ -580,7 +640,7 @@ export default function StrategyPage() {
     }
 
     // Based on challenges
-    if (strategy.challenges.some((c) => c.includes("time"))) {
+    if (userStrategy.challenges.some((c) => c.includes("time"))) {
       recommendations.push(
         "Implement a content batching system to create multiple posts in one session",
         "Use CampfireOS scheduling tools to automate posting",
@@ -588,7 +648,7 @@ export default function StrategyPage() {
       )
     }
 
-    if (strategy.challenges.some((c) => c.includes("ideas"))) {
+    if (userStrategy.challenges.some((c) => c.includes("ideas"))) {
       recommendations.push(
         "Create content pillars to organize your topic areas",
         "Set up a content idea repository to collect inspiration",
@@ -596,7 +656,7 @@ export default function StrategyPage() {
       )
     }
 
-    if (strategy.challenges.some((c) => c.includes("engagement"))) {
+    if (userStrategy.challenges.some((c) => c.includes("engagement"))) {
       recommendations.push(
         "Ask questions in your captions to encourage comments",
         "Respond promptly to all comments and messages",
@@ -604,7 +664,7 @@ export default function StrategyPage() {
       )
     }
 
-    if (strategy.challenges.some((c) => c.includes("growth"))) {
+    if (userStrategy.challenges.some((c) => c.includes("growth"))) {
       recommendations.push(
         "Analyze your best-performing content and create more similar content",
         "Implement a hashtag strategy relevant to your niche",
@@ -612,7 +672,7 @@ export default function StrategyPage() {
       )
     }
 
-    if (strategy.challenges.some((c) => c.includes("consistency"))) {
+    if (userStrategy.challenges.some((c) => c.includes("consistency"))) {
       recommendations.push(
         "Create a content calendar with planned posts",
         "Set specific days and times for content creation",
@@ -676,718 +736,485 @@ export default function StrategyPage() {
     }
   }
 
+  // Main UI with optional regenerating overlay
   return (
-    <div className="max-w-4xl mx-auto">
-      <header className="mb-8">
-        <h1 className="text-2xl sm:text-3xl font-bold mb-2">Your Social Media Strategy</h1>
-        <p className="text-muted-foreground">
-          Personalized strategy for {strategy.mainTopic}: {strategy.subTopic} • Generated on {formattedDate}
-        </p>
-      </header>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Target className="h-4 w-4 text-primary" />
-              Goal
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="font-medium capitalize">{strategy.goal}</p>
-            <p className="text-sm text-muted-foreground mt-1">{strategy.goalDetails}</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Users className="h-4 w-4 text-primary" />
-              Target Audience
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm">
-              <span className="font-medium">
-                {strategy.targetAudience.ageGroups.length > 0
-                  ? strategy.targetAudience.ageGroups.join(", ")
-                  : "All ages"}
-              </span>{" "}
-              •
-              <span className="capitalize">
-                {" "}
-                {strategy.targetAudience.gender === "all" ? "All genders" : strategy.targetAudience.gender}
-              </span>
+    <div className="relative">
+      {generatingPlan && (
+        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
+          <div className="relative mb-8">
+            <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping"></div>
+            <Loader2 className="h-16 w-16 text-primary animate-spin relative z-10" />
+          </div>
+          <h1 className="text-2xl font-bold mb-2">Regenerating Your Strategy</h1>
+          <p className="text-muted-foreground max-w-md mb-8 text-center">
+            Our AI is analyzing your information and crafting an updated social media strategy for your business.
+          </p>
+          <div className="w-full max-w-md bg-muted h-3 rounded-full overflow-hidden">
+            <div className="bg-primary h-full animate-pulse" style={{ width: "90%" }}></div>
+          </div>
+        </div>
+      )}
+      
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h1 className="text-3xl font-bold mb-2">Your Social Media Strategy</h1>
+            <p className="text-gray-600">
+              Personalized strategy for {userStrategy.mainTopic} • Generated on {formattedDate}
             </p>
-            <p className="text-sm mt-1">
-              Interested in{" "}
-              {strategy.targetAudience.interests.length > 0
-                ? getInterestNames(strategy.targetAudience.interests).join(", ")
-                : "various topics"}
-            </p>
-          </CardContent>
-        </Card>
+          </div>
+          <Button
+            onClick={async () => {
+              try {
+                setGeneratingPlan(true)
+                const surveyData = JSON.parse(localStorage.getItem("onboardingSurvey") || "")
+                const generatedStrategy = await generateStrategy(surveyData)
+                await updateStrategy(generatedStrategy)
+                setStrategy(generatedStrategy)
+              } catch (error) {
+                console.error("Error regenerating strategy:", error)
+              } finally {
+                setGeneratingPlan(false)
+              }
+            }}
+            disabled={generatingPlan}
+            className="bg-blue-500 hover:bg-blue-600 text-white"
+          >
+            {generatingPlan ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Regenerating...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Regenerate Strategy
+              </>
+            )}
+          </Button>
+        </div>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-primary" />
-              Current Platforms
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm">
-              {strategy.currentChannels.length > 0
-                ? getPlatformNames(strategy.currentChannels).join(", ")
-                : "No platforms selected"}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+        {/* Top Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          {/* Goal Card */}
+          <div className="bg-white rounded-lg p-6 shadow-sm border-2 border-gray-200 h-[180px] overflow-hidden">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-2xl">🎯</span>
+              <h2 className="text-lg font-semibold">Goal</h2>
+            </div>
+            <ul className="space-y-2">
+              <li className="flex items-baseline gap-2">
+                <span className="text-orange-500 text-sm">•</span>
+                <span className="text-sm">Type: {userStrategy.goal}</span>
+              </li>
+              <li className="flex items-baseline gap-2">
+                <span className="text-orange-500 text-sm">•</span>
+                <span className="text-sm">Focus: {userStrategy.mainTopic}</span>
+              </li>
+              <li className="flex items-baseline gap-2">
+                <span className="text-orange-500 text-sm">•</span>
+                <span className="text-sm line-clamp-1">Target: {userStrategy.subTopic}</span>
+              </li>
+            </ul>
+          </div>
 
-      <Tabs defaultValue="overview" value={activeTab} onValueChange={setActiveTab} className="mb-8">
-        <TabsList className="mb-4">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="audience">Audience</TabsTrigger>
-          <TabsTrigger value="platforms">Platforms</TabsTrigger>
-          <TabsTrigger value="content">Content Ideas</TabsTrigger>
-          <TabsTrigger value="recommendations">Recommendations</TabsTrigger>
-          <TabsTrigger value="plan" disabled={!contentPlan && !generatingPlan}>
-            Plan {generatingPlan && <Loader2 className="ml-2 h-3 w-3 animate-spin" />}
-          </TabsTrigger>
-        </TabsList>
+          {/* Target Audience Card */}
+          <div className="bg-white rounded-lg p-6 shadow-sm border-2 border-gray-200 h-[180px] overflow-hidden">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-2xl">👥</span>
+              <h2 className="text-lg font-semibold">Target Audience</h2>
+            </div>
+            <ul className="space-y-2">
+              <li className="flex items-baseline gap-2">
+                <span className="text-orange-500 text-sm">•</span>
+                <span className="text-sm">Age: {userStrategy.targetAudience.ageGroups.join(", ")}</span>
+              </li>
+              <li className="flex items-baseline gap-2">
+                <span className="text-orange-500 text-sm">•</span>
+                <span className="text-sm">Gender: {userStrategy.targetAudience.gender}</span>
+              </li>
+              <li className="flex items-baseline gap-2">
+                <span className="text-orange-500 text-sm">•</span>
+                <span className="text-sm line-clamp-1">Interests: {userStrategy.targetAudience.interests.join(", ")}</span>
+              </li>
+            </ul>
+          </div>
 
-        <TabsContent value="overview">
-          <Card>
-            <CardHeader>
-              <CardTitle>Strategy Overview</CardTitle>
-              <CardDescription>Your personalized social media strategy based on your goals and niche</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <h3 className="font-medium mb-2">Executive Summary</h3>
-                <p className="text-sm text-muted-foreground">
-                  Based on your focus on{" "}
-                  <strong>
-                    {strategy.mainTopic}: {strategy.subTopic}
-                  </strong>{" "}
-                  and your goal to <strong>{strategy.goal}</strong>, we've created a comprehensive social media strategy
-                  to help you overcome your challenges and achieve your objectives.
-                </p>
-              </div>
+          {/* Current Platforms Card */}
+          <div className="bg-white rounded-lg p-6 shadow-sm border-2 border-gray-200 h-[180px] overflow-hidden">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="text-2xl">📱</span>
+              <h2 className="text-lg font-semibold">Current Platforms</h2>
+            </div>
+            {userStrategy.currentChannels && userStrategy.currentChannels.length > 0 ? (
+              <ul className="space-y-2">
+                {userStrategy.currentChannels.map((channel) => (
+                  <li key={channel} className="flex items-baseline gap-2">
+                    <span className="text-orange-500 text-sm">•</span>
+                    <span className="text-sm capitalize">{getPlatformNames([channel])[0]}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-gray-500">No platforms selected yet</p>
+            )}
+          </div>
+        </div>
 
-              <div>
-                <h3 className="font-medium mb-2">Key Recommendations</h3>
-                <ul className="text-sm text-muted-foreground space-y-2">
-                  <li className="flex items-start gap-2">
-                    <div className="mt-1 h-4 w-4 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                      <span className="h-2 w-2 rounded-full bg-primary"></span>
-                    </div>
-                    <span>Focus on {platformRecs.primary.join(", ")} as your primary platforms</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <div className="mt-1 h-4 w-4 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                      <span className="h-2 w-2 rounded-full bg-primary"></span>
-                    </div>
-                    <span>Create a mix of educational, entertaining, and promotional content</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <div className="mt-1 h-4 w-4 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                      <span className="h-2 w-2 rounded-full bg-primary"></span>
-                    </div>
-                    <span>Maintain a consistent posting schedule of 3-5 times per week</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <div className="mt-1 h-4 w-4 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                      <span className="h-2 w-2 rounded-full bg-primary"></span>
-                    </div>
-                    <span>Engage with your audience by responding to comments and messages</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <div className="mt-1 h-4 w-4 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                      <span className="h-2 w-2 rounded-full bg-primary"></span>
-                    </div>
-                    <span>Use analytics to track performance and adjust your strategy accordingly</span>
-                  </li>
+        {/* Tabs Section */}
+        <Tabs defaultValue="overview" className="w-full">
+          <TabsList className="mb-6">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="audience">Audience</TabsTrigger>
+            <TabsTrigger value="platforms">Platforms</TabsTrigger>
+            <TabsTrigger value="content-ideas">Content Ideas</TabsTrigger>
+            <TabsTrigger value="recommendations">Recommendations</TabsTrigger>
+            <TabsTrigger value="plan">Plan</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="overview" className="bg-white rounded-lg p-6 shadow-sm">
+            <h2 className="text-xl font-semibold mb-4">Strategy Overview</h2>
+            <p className="text-gray-600 mb-6">Your personalized social media strategy based on your goals and niche</p>
+            
+            <h3 className="font-medium mb-2">Executive Summary</h3>
+            <p className="text-gray-600 mb-6">Based on your focus on {userStrategy.mainTopic} and your goal to build {userStrategy.goal}, we've created a comprehensive social media strategy to help you overcome your challenges and achieve your objectives.</p>
+
+            <h3 className="font-medium mb-2">Key Recommendations</h3>
+            <ul className="space-y-2">
+              <li className="flex items-center gap-2">
+                <span className="text-orange-500">•</span>
+                Focus on {userStrategy.currentChannels.join(", ")} as your primary platforms
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="text-orange-500">•</span>
+                Create a mix of educational, entertaining, and promotional content
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="text-orange-500">•</span>
+                Maintain a consistent posting schedule of 3-5 times per week
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="text-orange-500">•</span>
+                Engage with your audience by responding to comments and messages
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="text-orange-500">•</span>
+                Use analytics to track performance and adjust your strategy accordingly
+              </li>
+            </ul>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
+              <div className="border rounded-lg p-4">
+                <h4 className="font-medium mb-2">Content Mix</h4>
+                <ul className="space-y-1 text-sm">
+                  <li>40% Educational</li>
+                  <li>30% Entertaining</li>
+                  <li>20% Inspirational</li>
+                  <li>10% Promotional</li>
                 </ul>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
-                <div className="border rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <BarChart className="h-5 w-5 text-primary" />
-                    <h3 className="font-medium">Content Mix</h3>
-                  </div>
-                  <ul className="text-sm space-y-1">
-                    <li>40% Educational</li>
-                    <li>30% Entertaining</li>
-                    <li>20% Inspirational</li>
-                    <li>10% Promotional</li>
-                  </ul>
-                </div>
-
-                <div className="border rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <PieChart className="h-5 w-5 text-primary" />
-                    <h3 className="font-medium">Platform Focus</h3>
-                  </div>
-                  <ul className="text-sm space-y-1">
-                    <li>Primary: {platformRecs.primary.slice(0, 2).join(", ")}</li>
-                    <li>Secondary: {platformRecs.secondary.slice(0, 2).join(", ")}</li>
-                    <li>Experimental: {platformRecs.experimental[0]}</li>
-                  </ul>
-                </div>
-
-                <div className="border rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <LineChart className="h-5 w-5 text-primary" />
-                    <h3 className="font-medium">Posting Frequency</h3>
-                  </div>
-                  <ul className="text-sm space-y-1">
-                    <li>Primary: 3-5x weekly</li>
-                    <li>Secondary: 1-2x weekly</li>
-                    <li>Stories: Daily</li>
-                  </ul>
-                </div>
+              <div className="border rounded-lg p-4">
+                <h4 className="font-medium mb-2">Platform Focus</h4>
+                <ul className="space-y-1 text-sm">
+                  <li>Primary: Instagram, YouTube</li>
+                  <li>Secondary: Pinterest</li>
+                  <li>Experimental: Facebook Groups</li>
+                </ul>
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
 
-        <TabsContent value="audience">
-          <Card>
-            <CardHeader>
-              <CardTitle>Target Audience Analysis</CardTitle>
-              <CardDescription>Detailed breakdown of your ideal audience</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
+              <div className="border rounded-lg p-4">
+                <h4 className="font-medium mb-2">Posting Frequency</h4>
+                <ul className="space-y-1 text-sm">
+                  <li>Primary: 3-5x weekly</li>
+                  <li>Secondary: 1-2x weekly</li>
+                  <li>Stories: Daily</li>
+                </ul>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="audience" className="bg-white rounded-lg p-6 shadow-sm">
+            <h2 className="text-xl font-semibold mb-4">Target Audience Analysis</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div>
                 <h3 className="font-medium mb-3">Demographics</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="border rounded-lg p-4">
-                    <h4 className="text-sm font-medium mb-2">Age Groups</h4>
-                    <div className="space-y-2">
-                      {strategy.targetAudience.ageGroups.length > 0 ? (
-                        strategy.targetAudience.ageGroups.map((age) => (
-                          <div key={age} className="flex items-center justify-between">
-                            <span className="text-sm">{age}</span>
-                            <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                              <div
-                                className="bg-primary h-2 rounded-full"
-                                style={{
-                                  width:
-                                    age === "18-24" || age === "25-34"
-                                      ? "80%"
-                                      : age === "35-44"
-                                        ? "60%"
-                                        : age === "13-17"
-                                          ? "70%"
-                                          : "50%",
-                                }}
-                              ></div>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="text-sm text-muted-foreground">All age groups</p>
-                      )}
-                    </div>
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-600">Age Groups</h4>
+                    <p className="mt-1">{userStrategy.targetAudience.ageGroups.join(", ")}</p>
                   </div>
-
-                  <div className="border rounded-lg p-4">
-                    <h4 className="text-sm font-medium mb-2">Gender</h4>
-                    <div className="space-y-2">
-                      {strategy.targetAudience.gender === "all" ? (
-                        <>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm">Female</span>
-                            <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                              <div className="bg-primary h-2 rounded-full" style={{ width: "50%" }}></div>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm">Male</span>
-                            <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                              <div className="bg-primary h-2 rounded-full" style={{ width: "45%" }}></div>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm">Non-binary</span>
-                            <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                              <div className="bg-primary h-2 rounded-full" style={{ width: "5%" }}></div>
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm capitalize">{strategy.targetAudience.gender}</span>
-                          <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                            <div className="bg-primary h-2 rounded-full" style={{ width: "80%" }}></div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-600">Gender</h4>
+                    <p className="mt-1">{userStrategy.targetAudience.gender}</p>
                   </div>
-
-                  <div className="border rounded-lg p-4">
-                    <h4 className="text-sm font-medium mb-2">Location</h4>
-                    <div className="space-y-2">
-                      {strategy.targetAudience.location === "global" ? (
-                        <>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm">North America</span>
-                            <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                              <div className="bg-primary h-2 rounded-full" style={{ width: "40%" }}></div>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm">Europe</span>
-                            <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                              <div className="bg-primary h-2 rounded-full" style={{ width: "30%" }}></div>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm">Asia</span>
-                            <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                              <div className="bg-primary h-2 rounded-full" style={{ width: "20%" }}></div>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm">Other</span>
-                            <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                              <div className="bg-primary h-2 rounded-full" style={{ width: "10%" }}></div>
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm capitalize">{strategy.targetAudience.location}</span>
-                          <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                            <div className="bg-primary h-2 rounded-full" style={{ width: "80%" }}></div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-600">Location</h4>
+                    <p className="mt-1">{userStrategy.targetAudience.location}</p>
                   </div>
                 </div>
               </div>
-
               <div>
                 <h3 className="font-medium mb-3">Interests & Behaviors</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                  {strategy.targetAudience.interests.length > 0 ? (
-                    getInterestNames(strategy.targetAudience.interests).map((interest) => (
-                      <div key={interest} className="bg-primary/10 text-primary px-3 py-2 rounded-md text-sm">
-                        {interest}
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-muted-foreground col-span-full">No specific interests selected</p>
-                  )}
-
-                  {strategy.targetAudience.customInterests.map((interest, index) => (
-                    <div key={`custom-${index}`} className="bg-primary/10 text-primary px-3 py-2 rounded-md text-sm">
-                      {interest}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <h3 className="font-medium mb-3">Audience Insights</h3>
-                <div className="space-y-3">
-                  <div className="p-3 border rounded-lg">
-                    <h4 className="font-medium text-sm mb-1">Content Preferences</h4>
-                    <p className="text-sm text-muted-foreground">
-                      Based on your audience demographics and interests, they likely prefer
-                      {strategy.targetAudience.ageGroups.includes("13-17") ||
-                      strategy.targetAudience.ageGroups.includes("18-24")
-                        ? " short-form video content, interactive stories, and visually engaging posts."
-                        : strategy.targetAudience.ageGroups.includes("25-34")
-                          ? " a mix of video and image content, with practical information and inspirational stories."
-                          : " in-depth content with valuable information, how-to guides, and industry insights."}
-                    </p>
-                  </div>
-
-                  <div className="p-3 border rounded-lg">
-                    <h4 className="font-medium text-sm mb-1">Platform Usage</h4>
-                    <p className="text-sm text-muted-foreground">
-                      Your target audience is most active on {platformRecs.primary.join(", ")}. They typically engage
-                      with content during
-                      {strategy.targetAudience.ageGroups.includes("13-17") ||
-                      strategy.targetAudience.ageGroups.includes("18-24")
-                        ? " evenings and late night hours."
-                        : strategy.targetAudience.ageGroups.includes("25-34")
-                          ? " lunch breaks, commuting hours, and evenings."
-                          : " mornings and early evenings."}
-                    </p>
-                  </div>
-
-                  <div className="p-3 border rounded-lg">
-                    <h4 className="font-medium text-sm mb-1">Pain Points & Motivations</h4>
-                    <p className="text-sm text-muted-foreground">
-                      People interested in {strategy.mainTopic} are often looking for
-                      {strategy.goal === "product"
-                        ? " solutions to specific problems and ways to improve their quality of life."
-                        : strategy.goal === "service"
-                          ? " expert guidance and specialized knowledge to address their challenges."
-                          : strategy.goal === "awareness"
-                            ? " educational content and thought leadership to expand their understanding."
-                            : " community connection and shared experiences with like-minded individuals."}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="platforms">
-          <Card>
-            <CardHeader>
-              <CardTitle>Recommended Platforms</CardTitle>
-              <CardDescription>The best social media platforms for your {strategy.mainTopic} focus</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div>
-                <h3 className="font-medium mb-3">Primary Platforms</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  {platformRecs.primary.map((platform) => (
-                    <div key={platform} className="border rounded-lg p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                          {platform === "Instagram" && <MessageSquare className="h-4 w-4 text-primary" />}
-                          {platform === "Twitter" && <MessageSquare className="h-4 w-4 text-primary" />}
-                          {platform === "Facebook" && <Users className="h-4 w-4 text-primary" />}
-                          {platform === "LinkedIn" && <Users className="h-4 w-4 text-primary" />}
-                          {platform === "TikTok" && <TrendingUp className="h-4 w-4 text-primary" />}
-                          {platform === "YouTube" && <TrendingUp className="h-4 w-4 text-primary" />}
-                          {platform === "Pinterest" && <TrendingUp className="h-4 w-4 text-primary" />}
-                          {platform === "Twitch" && <TrendingUp className="h-4 w-4 text-primary" />}
-                        </div>
-                        <h4 className="font-medium">{platform}</h4>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {platform === "Instagram" && "Perfect for visual content and reaching a younger audience"}
-                        {platform === "Twitter" && "Great for news, updates, and engaging in industry conversations"}
-                        {platform === "Facebook" && "Ideal for community building and reaching a diverse audience"}
-                        {platform === "LinkedIn" && "Best for B2B connections and professional content"}
-                        {platform === "TikTok" && "Excellent for short-form video and trending content"}
-                        {platform === "YouTube" && "Ideal for in-depth tutorials and educational content"}
-                        {platform === "Pinterest" && "Perfect for inspirational and DIY content"}
-                        {platform === "Twitch" && "Great for live streaming and gaming content"}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <h3 className="font-medium mb-3">Secondary Platforms</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  {platformRecs.secondary.map((platform) => (
-                    <div key={platform} className="border rounded-lg p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center">
-                          {platform === "Instagram" && <MessageSquare className="h-4 w-4 text-muted-foreground" />}
-                          {platform === "Twitter" && <MessageSquare className="h-4 w-4 text-muted-foreground" />}
-                          {platform === "Facebook" && <Users className="h-4 w-4 text-muted-foreground" />}
-                          {platform === "LinkedIn" && <Users className="h-4 w-4 text-muted-foreground" />}
-                          {platform === "TikTok" && <TrendingUp className="h-4 w-4 text-muted-foreground" />}
-                          {platform === "YouTube" && <TrendingUp className="h-4 w-4 text-muted-foreground" />}
-                          {platform === "Pinterest" && <TrendingUp className="h-4 w-4 text-muted-foreground" />}
-                          {platform === "Reddit" && <Users className="h-4 w-4 text-muted-foreground" />}
-                          {platform === "Discord" && <MessageSquare className="h-4 w-4 text-muted-foreground" />}
-                        </div>
-                        <h4 className="font-medium">{platform}</h4>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {platform === "Instagram" && "Supplement your strategy with visual content"}
-                        {platform === "Twitter" && "Use for quick updates and industry engagement"}
-                        {platform === "Facebook" && "Good for community building and paid advertising"}
-                        {platform === "LinkedIn" && "Use for professional networking and B2B content"}
-                        {platform === "TikTok" && "Experiment with trending content formats"}
-                        {platform === "YouTube" && "Create occasional in-depth video content"}
-                        {platform === "Pinterest" && "Share visual inspiration related to your niche"}
-                        {platform === "Reddit" && "Engage in niche communities and discussions"}
-                        {platform === "Discord" && "Build a dedicated community space"}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <h3 className="font-medium mb-3">Experimental Platforms</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  {platformRecs.experimental.map((platform) => (
-                    <div key={platform} className="border rounded-lg p-4 border-dashed">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="h-8 w-8 rounded-full bg-primary/5 flex items-center justify-center">
-                          {platform === "Twitter" && <MessageSquare className="h-4 w-4 text-primary/70" />}
-                          {platform === "Facebook" && <Users className="h-4 w-4 text-primary/70" />}
-                          {platform === "LinkedIn" && <Users className="h-4 w-4 text-primary/70" />}
-                          {platform === "TikTok" && <TrendingUp className="h-4 w-4 text-primary/70" />}
-                          {platform === "Instagram" && <MessageSquare className="h-4 w-4 text-primary/70" />}
-                          {platform === "Snapchat" && <MessageSquare className="h-4 w-4 text-primary/70" />}
-                          {platform === "Behance" && <TrendingUp className="h-4 w-4 text-primary/70" />}
-                          {platform === "Facebook Groups" && <Users className="h-4 w-4 text-primary/70" />}
-                        </div>
-                        <h4 className="font-medium">{platform}</h4>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {platform === "Twitter" && "Test engagement with industry conversations"}
-                        {platform === "Facebook" && "Experiment with groups and community features"}
-                        {platform === "LinkedIn" && "Try thought leadership content if relevant to your niche"}
-                        {platform === "TikTok" && "Experiment with trending formats and challenges"}
-                        {platform === "Instagram" && "Test different content formats like Reels and Stories"}
-                        {platform === "Snapchat" && "Reach younger audiences with ephemeral content"}
-                        {platform === "Behance" && "Showcase your creative portfolio and process"}
-                        {platform === "Facebook Groups" && "Build a dedicated community around your topic"}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="content">
-          <Card>
-            <CardHeader>
-              <CardTitle>Content Ideas</CardTitle>
-              <CardDescription>Suggested content types for your {strategy.mainTopic} focus</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {contentIdeas.map((idea, index) => (
-                  <div key={index} className="p-4 border rounded-lg">
-                    <div className="flex items-start gap-3">
-                      <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <span className="text-xs font-medium text-primary">{index + 1}</span>
-                      </div>
-                      <div>
-                        <p className="font-medium">{idea}</p>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {index % 3 === 0 && "Builds credibility and showcases your expertise"}
-                          {index % 3 === 1 && "Engages your audience and encourages interaction"}
-                          {index % 3 === 2 && "Demonstrates value and builds trust with your audience"}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="recommendations">
-          <Card>
-            <CardHeader>
-              <CardTitle>Strategic Recommendations</CardTitle>
-              <CardDescription>Actionable strategies based on your goals and challenges</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-6">
-                <div>
-                  <h3 className="font-medium mb-3">Goal-Based Strategies</h3>
-                  <div className="space-y-3">
-                    {strategicRecommendations.slice(0, 4).map((recommendation, index) => (
-                      <div key={index} className="p-4 border rounded-lg">
-                        <div className="flex items-start gap-3">
-                          <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                            <Clipboard className="h-3 w-3 text-primary" />
-                          </div>
-                          <p className="text-sm">{recommendation}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="font-medium mb-3">Challenge Solutions</h3>
-                  <div className="space-y-3">
-                    {strategicRecommendations.slice(4).map((recommendation, index) => (
-                      <div key={index} className="p-4 border rounded-lg">
-                        <div className="flex items-start gap-3">
-                          <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                            <Clipboard className="h-3 w-3 text-primary" />
-                          </div>
-                          <p className="text-sm">{recommendation}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="font-medium mb-3">Implementation Timeline</h3>
-                  <div className="space-y-3">
-                    <div className="p-4 border rounded-lg">
-                      <h4 className="font-medium mb-2">Week 1-2: Foundation</h4>
-                      <ul className="text-sm space-y-1 text-muted-foreground">
-                        <li>• Set up and optimize profiles on primary platforms</li>
-                        <li>• Create content pillars and initial content calendar</li>
-                        <li>• Establish brand voice and visual identity guidelines</li>
-                      </ul>
-                    </div>
-                    <div className="p-4 border rounded-lg">
-                      <h4 className="font-medium mb-2">Week 3-4: Content Creation</h4>
-                      <ul className="text-sm space-y-1 text-muted-foreground">
-                        <li>• Batch create initial content for each platform</li>
-                        <li>• Set up scheduling and automation tools</li>
-                        <li>• Begin engaging with relevant communities</li>
-                      </ul>
-                    </div>
-                    <div className="p-4 border rounded-lg">
-                      <h4 className="font-medium mb-2">Month 2: Growth & Optimization</h4>
-                      <ul className="text-sm space-y-1 text-muted-foreground">
-                        <li>• Analyze initial performance metrics</li>
-                        <li>• Refine content strategy based on data</li>
-                        <li>• Expand to secondary platforms if appropriate</li>
-                        <li>• Begin collaboration outreach</li>
-                      </ul>
-                    </div>
-                    <div className="p-4 border rounded-lg">
-                      <h4 className="font-medium mb-2">Month 3: Scaling & Refinement</h4>
-                      <ul className="text-sm space-y-1 text-muted-foreground">
-                        <li>• Implement advanced content strategies</li>
-                        <li>• Consider paid promotion for best-performing content</li>
-                        <li>• Develop community engagement initiatives</li>
-                        <li>• Review and update strategy based on results</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="plan">
-          {contentPlan ? (
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Content Plan</CardTitle>
-                  <CardDescription>
-                    Your personalized content plan for {strategy.mainTopic} • Generated on {contentPlanDate}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="font-medium mb-3">Content Themes</h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                        {contentPlan.themes.map((theme) => (
-                          <div key={theme.id} className={`p-4 rounded-lg ${theme.color}`}>
-                            <h4 className="font-medium mb-1">{theme.name}</h4>
-                            <p className="text-xs">{theme.description}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {contentPlan.weeks.map((week) => (
-                <Card key={week.weekNumber}>
-                  <CardHeader>
-                    <CardTitle>Week {week.weekNumber}</CardTitle>
-                    <CardDescription>
-                      {week.posts.length} posts scheduled across{" "}
-                      {[...new Set(week.posts.map((post) => post.platform))].length} platforms
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      {week.posts.map((post) => (
-                        <div key={post.id} className="p-4 border rounded-lg">
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-                            <div className="flex items-center gap-2">
-                              <div className="flex items-center gap-1">
-                                {getPlatformIcon(post.platform)}
-                                <span className="text-sm font-medium capitalize">{post.platform}</span>
-                              </div>
-                              <span className="text-muted-foreground">•</span>
-                              <div className="flex items-center gap-1">
-                                {getContentTypeIcon(post.contentType)}
-                                <span className="text-sm capitalize">{post.contentType}</span>
-                              </div>
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {post.suggestedDate} at {post.suggestedTime}
-                            </div>
-                          </div>
-                          <h4 className="font-medium mb-2">{post.topic}</h4>
-                          <p className="text-sm text-muted-foreground">{post.description}</p>
-                          <div className="flex justify-between items-center mt-3">
-                            <div className="text-xs px-2 py-1 rounded-full bg-muted">
-                              {post.status === "draft"
-                                ? "Draft"
-                                : post.status === "scheduled"
-                                  ? "Scheduled"
-                                  : "Published"}
-                            </div>
-                            <div className="flex gap-2">
-                              <Button variant="outline" size="sm">
-                                Edit
-                              </Button>
-                              <Button variant="outline" size="sm">
-                                Schedule
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-600">Primary Interests</h4>
+                    <ul className="mt-1 space-y-1">
+                      {userStrategy.targetAudience.interests.map((interest) => (
+                        <li key={interest} className="flex items-center gap-2">
+                          <span className="text-orange-500">•</span>
+                          {interest}
+                        </li>
                       ))}
+                    </ul>
+                  </div>
+                  {userStrategy.targetAudience.customInterests?.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-600">Custom Interests</h4>
+                      <ul className="mt-1 space-y-1">
+                        {userStrategy.targetAudience.customInterests.map((interest) => (
+                          <li key={interest} className="flex items-center gap-2">
+                            <span className="text-orange-500">•</span>
+                            {interest}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <Card>
-              <CardContent className="p-8 text-center">
-                <div className="mb-4">
-                  <Calendar className="h-12 w-12 mx-auto text-muted-foreground" />
-                </div>
-                <h2 className="text-xl font-medium mb-2">No content plan found</h2>
-                <p className="text-muted-foreground mb-6">
-                  Generate a content plan based on your strategy to get started.
-                </p>
-                <Button onClick={handleCreateContentPlan} disabled={generatingPlan}>
-                  {generatingPlan ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Generating Plan...
-                    </>
-                  ) : (
-                    "Generate Content Plan"
                   )}
-                </Button>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-      </Tabs>
+                </div>
+              </div>
+            </div>
+          </TabsContent>
 
-      <div className="flex flex-col sm:flex-row gap-4 justify-end">
-        <Button variant="outline" className="gap-2">
-          <Download className="h-4 w-4" />
-          Download Strategy
-        </Button>
-        <Button variant="outline" className="gap-2">
-          <Share2 className="h-4 w-4" />
-          Share Strategy
-        </Button>
-        <Button className="gap-2" onClick={handleCreateContentPlan} disabled={generatingPlan}>
-          <BarChart2 className="h-4 w-4" />
-          {generatingPlan ? "Generating Plan..." : "Create Content Plan"}
-        </Button>
+          <TabsContent value="platforms" className="bg-white rounded-lg p-6 shadow-sm">
+            <h2 className="text-xl font-semibold mb-4">Platform Strategy</h2>
+            <div className="space-y-8">
+              <div>
+                <h3 className="font-medium mb-3">Current Platforms</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {userStrategy.currentChannels.map((platform) => (
+                    <div key={platform} className="p-4 border rounded-lg">
+                      <div className="flex items-center gap-2 mb-2">
+                        {getPlatformIcon(platform)}
+                        <span className="font-medium capitalize">{platform}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="font-medium mb-3">Recommended Platform Strategy</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-medium text-gray-600">Primary Focus</h4>
+                    <ul className="space-y-1">
+                      {platformRecs.primary.map((platform) => (
+                        <li key={platform} className="flex items-center gap-2">
+                          <span className="text-orange-500">•</span>
+                          {platform}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-medium text-gray-600">Secondary Focus</h4>
+                    <ul className="space-y-1">
+                      {platformRecs.secondary.map((platform) => (
+                        <li key={platform} className="flex items-center gap-2">
+                          <span className="text-orange-500">•</span>
+                          {platform}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-medium text-gray-600">Experimental</h4>
+                    <ul className="space-y-1">
+                      {platformRecs.experimental.map((platform) => (
+                        <li key={platform} className="flex items-center gap-2">
+                          <span className="text-orange-500">•</span>
+                          {platform}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="content-ideas" className="bg-white rounded-lg p-6 shadow-sm">
+            <h2 className="text-xl font-semibold mb-4">Content Ideas</h2>
+            <div className="space-y-8">
+              <div>
+                <h3 className="font-medium mb-3">Recommended Content Types</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {contentIdeas.map((idea, index) => (
+                    <div key={index} className="p-4 border rounded-lg">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-orange-500">•</span>
+                        <p>{idea}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="font-medium mb-3">Content Mix Distribution</h3>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="p-4 border rounded-lg bg-blue-50">
+                    <h4 className="font-medium mb-2">Educational (40%)</h4>
+                    <p className="text-sm text-gray-600">Focus on teaching and informing your audience about {userStrategy.mainTopic}</p>
+                  </div>
+                  <div className="p-4 border rounded-lg bg-purple-50">
+                    <h4 className="font-medium mb-2">Entertaining (30%)</h4>
+                    <p className="text-sm text-gray-600">Create engaging and fun content to keep your audience interested</p>
+                  </div>
+                  <div className="p-4 border rounded-lg bg-orange-50">
+                    <h4 className="font-medium mb-2">Inspirational (20%)</h4>
+                    <p className="text-sm text-gray-600">Share success stories and motivational content</p>
+                  </div>
+                  <div className="p-4 border rounded-lg bg-green-50">
+                    <h4 className="font-medium mb-2">Promotional (10%)</h4>
+                    <p className="text-sm text-gray-600">Promote your offerings and services</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="recommendations" className="bg-white rounded-lg p-6 shadow-sm">
+            <h2 className="text-xl font-semibold mb-4">Strategic Recommendations</h2>
+            <div className="space-y-8">
+              <div>
+                <h3 className="font-medium mb-3">Goal-Based Recommendations</h3>
+                <div className="p-4 border rounded-lg mb-6">
+                  <h4 className="font-medium mb-2">Primary Goal: {userStrategy.goal}</h4>
+                  <p className="text-gray-600 mb-4">{userStrategy.goalDetails}</p>
+                  <ul className="space-y-2">
+                    {strategicRecommendations.slice(0, 4).map((rec, index) => (
+                      <li key={index} className="flex items-baseline gap-2">
+                        <span className="text-orange-500">•</span>
+                        <span>{rec}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="font-medium mb-3">Challenge-Based Solutions</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {userStrategy.challenges.map((challenge, index) => (
+                    <div key={index} className="p-4 border rounded-lg">
+                      <h4 className="font-medium mb-2">Challenge: {challenge}</h4>
+                      <ul className="space-y-2">
+                        {strategicRecommendations.slice(4 + index * 3, 7 + index * 3).map((rec, recIndex) => (
+                          <li key={recIndex} className="flex items-baseline gap-2">
+                            <span className="text-orange-500">•</span>
+                            <span className="text-sm">{rec}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="plan" className="bg-white rounded-lg p-6 shadow-sm">
+            <h2 className="text-xl font-semibold mb-4">Action Plan</h2>
+            <div className="space-y-8">
+              <div>
+                <h3 className="font-medium mb-3">Implementation Timeline</h3>
+                <div className="space-y-4">
+                  <div className="p-4 border rounded-lg">
+                    <h4 className="font-medium mb-2">Week 1-2: Setup & Foundation</h4>
+                    <ul className="space-y-2">
+                      <li className="flex items-baseline gap-2">
+                        <span className="text-orange-500">•</span>
+                        <span>Set up and optimize profiles on {userStrategy.currentChannels.join(", ")}</span>
+                      </li>
+                      <li className="flex items-baseline gap-2">
+                        <span className="text-orange-500">•</span>
+                        <span>Create content calendar and posting schedule</span>
+                      </li>
+                      <li className="flex items-baseline gap-2">
+                        <span className="text-orange-500">•</span>
+                        <span>Develop initial content batch focusing on {userStrategy.mainTopic}</span>
+                      </li>
+                    </ul>
+                  </div>
+                  <div className="p-4 border rounded-lg">
+                    <h4 className="font-medium mb-2">Week 3-4: Content Creation & Engagement</h4>
+                    <ul className="space-y-2">
+                      <li className="flex items-baseline gap-2">
+                        <span className="text-orange-500">•</span>
+                        <span>Begin regular posting schedule</span>
+                      </li>
+                      <li className="flex items-baseline gap-2">
+                        <span className="text-orange-500">•</span>
+                        <span>Implement engagement strategy</span>
+                      </li>
+                      <li className="flex items-baseline gap-2">
+                        <span className="text-orange-500">•</span>
+                        <span>Start tracking metrics and engagement rates</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="font-medium mb-3">Success Metrics</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 border rounded-lg">
+                    <h4 className="font-medium mb-2">Growth Metrics</h4>
+                    <ul className="space-y-1 text-sm">
+                      <li>Follower growth rate</li>
+                      <li>Reach and impressions</li>
+                      <li>Profile visits</li>
+                    </ul>
+                  </div>
+                  <div className="p-4 border rounded-lg">
+                    <h4 className="font-medium mb-2">Engagement Metrics</h4>
+                    <ul className="space-y-1 text-sm">
+                      <li>Engagement rate per post</li>
+                      <li>Comments and saves</li>
+                      <li>Story interactions</li>
+                    </ul>
+                  </div>
+                  <div className="p-4 border rounded-lg">
+                    <h4 className="font-medium mb-2">Content Performance</h4>
+                    <ul className="space-y-1 text-sm">
+                      <li>Best performing content types</li>
+                      <li>Optimal posting times</li>
+                      <li>Audience retention</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
+
+        {/* Action Buttons */}
+        <div className="flex justify-end gap-4 mt-8">
+          <Button variant="outline" className="gap-2">
+            <Download className="h-4 w-4" />
+            Download Strategy
+          </Button>
+          <Button variant="outline" className="gap-2">
+            <Share2 className="h-4 w-4" />
+            Share Strategy
+          </Button>
+          <Button className="bg-orange-500 hover:bg-orange-600 text-white gap-2" onClick={() => router.push('/content-plan')}>
+            Create Content Plan
+          </Button>
+        </div>
       </div>
     </div>
   )

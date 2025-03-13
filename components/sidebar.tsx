@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { Home, Target, Layers, Settings, TrendingUp, Menu, X } from "lucide-react"
+import { Home, Target, Layers, Settings, TrendingUp, Menu, X, Share2 } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useState, useEffect } from "react"
@@ -12,8 +12,8 @@ import { Button } from "@/components/ui/button"
 // Define the navigation items - updated to replace Favorites with Trends and remove Marketplace
 const navigationItems = [
   {
-    name: "Home",
-    path: "/",
+    name: "Dashboard",
+    path: "/dashboard",
     icon: Home,
   },
   {
@@ -23,17 +23,19 @@ const navigationItems = [
   },
   {
     name: "Socials",
+    icon: Share2,
     path: "/socials",
-    icon: Layers,
+    description: "Connect and manage your social media accounts",
   },
   {
     name: "Trends",
-    path: "/trends",
     icon: TrendingUp,
+    path: "/trends",
+    description: "Stay updated with the latest social media trends",
   },
   {
     name: "Settings",
-    path: "/settings",
+    path: "/dashboard/settings",
     icon: Settings,
     isHeader: true,
   },

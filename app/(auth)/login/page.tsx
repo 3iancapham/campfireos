@@ -31,6 +31,7 @@ export default function LoginPage() {
       
       // Update last login time in Firestore
       const userDocRef = doc(db, 'users', result.user.uid)
+      const userDoc = await getDoc(userDocRef)
       await setDoc(userDocRef, {
         lastLogin: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -40,7 +41,14 @@ export default function LoginPage() {
         title: "Success!",
         description: "You've been logged in successfully.",
       })
-      router.push("/dashboard")
+
+      // Check if user has completed onboarding
+      const onboardingSurvey = localStorage.getItem("onboardingSurvey")
+      if (!onboardingSurvey) {
+        router.push("/onboarding")
+      } else {
+        router.push("/dashboard")
+      }
     } catch (error: any) {
       toast({
         title: "Error",
@@ -72,8 +80,15 @@ export default function LoginPage() {
           lastLogin: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         }, { merge: true })
+
+        // Check if user has completed onboarding
+        const onboardingSurvey = localStorage.getItem("onboardingSurvey")
+        if (!onboardingSurvey) {
+          router.push("/onboarding")
+          return
+        }
       } else {
-        // User doesn't exist, create a new document
+        // New user, create document and redirect to onboarding
         console.log('Login page: User does not exist in Firestore, creating new document')
         await setDoc(userDocRef, {
           firstName: result.user.displayName?.split(' ')[0] || '',
@@ -84,6 +99,8 @@ export default function LoginPage() {
           lastLogin: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         })
+        router.push("/onboarding")
+        return
       }
       
       toast({

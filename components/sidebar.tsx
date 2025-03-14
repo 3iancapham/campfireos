@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { Home, Target, Layers, Settings, TrendingUp, Menu, X, Share2 } from "lucide-react"
+import { Home, Target, Layers, Settings, TrendingUp, Menu, X, Share2, LayoutDashboard, BarChart2, Calendar, Zap } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useState, useEffect } from "react"
@@ -20,6 +20,11 @@ const navigationItems = [
     name: "Strategy",
     path: "/strategy",
     icon: Target,
+  },
+  {
+    name: "Anthropic Test",
+    path: "/anthropic",
+    icon: Zap,
   },
   {
     name: "Socials",

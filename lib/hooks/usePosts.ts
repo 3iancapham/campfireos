@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { useAuth } from '@clerk/nextjs'
+import { useAuth } from '@/components/providers/auth'
 import { createPost, getUserPosts, updatePost, deletePost } from '../firebase/firestore'
 import type { Post } from '../types'
 
 export function usePosts() {
-  const { userId } = useAuth()
+  const { user } = useAuth()
+  const userId = user?.uid
   const [posts, setPosts] = useState<Post[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

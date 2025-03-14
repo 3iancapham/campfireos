@@ -1,40 +1,40 @@
 export function parseStrategyFromMarkdown(markdown: string): any {
+  // Remove any strategy_analysis section if present
+  markdown = markdown.replace(/<strategy_analysis>[\s\S]*?<\/strategy_analysis>/g, '');
+  
   // Split into sections, handling both ## and # headers
   const sections = markdown.split(/\n[#]+\s+/).filter(Boolean);
   
-  // Find the platform strategy section
-  const platformSection = sections.find(section => 
-    section.toLowerCase().includes('platform') || 
-    section.toLowerCase().includes('channels')
-  ) || '';
+  // Find the high-level summary section (section 1)
+  const summarySection = sections.find(section => 
+    section.toLowerCase().includes('high-level summary') || 
+    section.toLowerCase().includes('summary')
+  ) || sections[1] || '';
 
-  // Extract current platforms more flexibly
-  const currentPlatformsMatch = platformSection.match(/current (?:platforms|channels):\s*([^.\n]+)/i);
-  const currentPlatforms = currentPlatformsMatch 
-    ? currentPlatformsMatch[1].toLowerCase().split(/[,\n]/).map(p => p.trim()).filter(Boolean)
-    : [];
-
-  // Find the audience section
-  const audienceSection = sections.find(section => 
-    section.toLowerCase().includes('audience') || 
-    section.toLowerCase().includes('demographics')
-  ) || '';
-
-  // Find the recommendations section
-  const recommendationsSection = sections.find(section =>
-    section.toLowerCase().includes('recommendations') ||
-    section.toLowerCase().includes('strategy')
-  ) || '';
-
-  // Find the content section
+  // Find the content strategy section (section 2)
   const contentSection = sections.find(section =>
-    section.toLowerCase().includes('content') ||
-    section.toLowerCase().includes('posts')
-  ) || '';
+    section.toLowerCase().includes('content strategy') ||
+    section.toLowerCase().includes('content')
+  ) || sections[2] || '';
+
+  // Find the target audience section (section 3)
+  const audienceSection = sections.find(section => 
+    section.toLowerCase().includes('target audience') || 
+    section.toLowerCase().includes('audience strategy')
+  ) || sections[3] || '';
+
+  // Find the strategic recommendations section (section 4)
+  const recommendationsSection = sections.find(section =>
+    section.toLowerCase().includes('strategic recommendations') ||
+    section.toLowerCase().includes('recommendations')
+  ) || sections[4] || '';
+
+  // Extract current platforms from the summary or content sections
+  const currentPlatforms = extractPlatforms(summarySection + contentSection);
 
   return {
-    mainTopic: extractMainTopic(sections[0] || ''),
-    subTopic: extractSubTopic(sections[0] || ''),
+    mainTopic: extractMainTopic(summarySection),
+    subTopic: extractSubTopic(summarySection),
     currentChannels: currentPlatforms,
     targetAudience: {
       ageGroups: extractAgeGroups(audienceSection),
@@ -43,8 +43,8 @@ export function parseStrategyFromMarkdown(markdown: string): any {
       location: extractLocation(audienceSection),
       customInterests: extractCustomInterests(audienceSection)
     },
-    goal: extractGoal(recommendationsSection),
-    goalDetails: extractGoalDetails(recommendationsSection),
+    goal: extractGoal(recommendationsSection || summarySection),
+    goalDetails: extractGoalDetails(recommendationsSection || summarySection),
     challenges: extractChallenges(recommendationsSection),
     recommendations: {
       contentIdeas: extractContentIdeas(contentSection),
@@ -155,7 +155,22 @@ function extractStrategicRecommendations(section: string): string[] {
 }
 
 function extractPlatforms(section: string): string[] {
-  const platforms = ['instagram', 'tiktok', 'youtube', 'twitter', 'facebook', 'linkedin', 'pinterest', 'reddit', 'twitch'];
-  const foundPlatforms = platforms.filter(p => section.toLowerCase().includes(p));
+  const platformKeywords = [
+    { name: 'instagram', keywords: ['instagram', 'ig'] },
+    { name: 'tiktok', keywords: ['tiktok', 'tik tok'] },
+    { name: 'youtube', keywords: ['youtube', 'yt'] },
+    { name: 'twitter', keywords: ['twitter', 'x'] },
+    { name: 'facebook', keywords: ['facebook', 'fb'] },
+    { name: 'linkedin', keywords: ['linkedin'] },
+    { name: 'pinterest', keywords: ['pinterest'] },
+    { name: 'reddit', keywords: ['reddit'] },
+    { name: 'twitch', keywords: ['twitch'] }
+  ];
+  
+  const lowerSection = section.toLowerCase();
+  const foundPlatforms = platformKeywords
+    .filter(p => p.keywords.some(keyword => lowerSection.includes(keyword)))
+    .map(p => p.name);
+  
   return foundPlatforms;
 } 

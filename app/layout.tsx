@@ -1,13 +1,12 @@
-import type React from "react"
-import { ThemeProvider } from "@/components/theme-provider"
-import { AuthProvider } from "@/components/providers/auth"
 import "./globals.css"
 import type { Metadata } from "next"
+import { Toaster } from "@/components/ui/toaster"
+import { AuthProvider } from "@/components/providers/auth"
+import { ChatAssistant } from "@/components/chat-assistant"
 
 export const metadata: Metadata = {
-  title: "CampfireOS - AI Social Media Management",
-  description: "Manage all your social media accounts with AI assistance",
-  generator: 'v0.dev'
+  title: "CampfireOS",
+  description: "Your AI-powered social media strategy assistant",
 }
 
 export default function RootLayout({
@@ -19,11 +18,11 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen bg-background font-sans antialiased">
         <AuthProvider>
-          <ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>
-            <main className="relative flex min-h-screen flex-col">
-              {children}
-            </main>
-          </ThemeProvider>
+          <main className="relative flex min-h-screen flex-col">
+            {children}
+          </main>
+          <Toaster />
+          <ChatAssistant />
         </AuthProvider>
       </body>
     </html>

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "migrate:users": "node scripts/migrateUsers.js"
+    "migrate:users": "ts-node -T scripts/migrateUsers.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

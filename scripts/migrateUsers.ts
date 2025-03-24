@@ -1,9 +1,12 @@
-const admin = require('firebase-admin')
+import * as admin from 'firebase-admin'
+import { UserData, SurveyAnswers } from '@/lib/types'
+
+// Import service account using require since we're in CommonJS mode
 const serviceAccount = require('../serviceAccountKey.json')
 
 // Initialize Firebase Admin
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
+  credential: admin.credential.cert(serviceAccount as admin.ServiceAccount)
 })
 
 const db = admin.firestore()
@@ -23,16 +26,41 @@ async function migrateUsers() {
     // Process each user
     for (const userDoc of usersSnapshot.docs) {
       try {
-        const userData = userDoc.data()
+        const userData = userDoc.data() as UserData
         const now = new Date().toISOString()
         
         // Prepare the update object
-        const updateData = {
+        const updateData: Partial<UserData> = {
           updatedAt: now,
           lastLogin: userData.lastLogin || now,
           createdAt: userData.createdAt || now,
           strategy: userData.strategy || null,
           contentPlan: userData.contentPlan || null
+        }
+
+        // Handle survey answers migration if they exist
+        if (userData.surveyAnswers) {
+          const oldSurveyAnswers = userData.surveyAnswers
+          
+          updateData.surveyAnswers = {
+            businessType: oldSurveyAnswers.businessType || '',
+            mainTopic: oldSurveyAnswers.mainTopic || '',
+            subTopic: oldSurveyAnswers.subTopic || '',
+            goals: oldSurveyAnswers.goals || [],
+            targetAudience: {
+              ageGroups: oldSurveyAnswers.targetAudience?.ageGroups || [],
+              gender: oldSurveyAnswers.targetAudience?.gender || '',
+              interests: oldSurveyAnswers.targetAudience?.interests || [],
+              location: oldSurveyAnswers.targetAudience?.location || '',
+              customInterests: oldSurveyAnswers.targetAudience?.customInterests || []
+            },
+            platforms: (oldSurveyAnswers as any).platforms || 
+                      (oldSurveyAnswers as any).contentPreferences?.platforms || [],
+            challenges: oldSurveyAnswers.challenges || [],
+            surveyCompletedAt: oldSurveyAnswers.surveyCompletedAt || now
+          } as SurveyAnswers
+
+          console.log(`📋 Migrating survey answers for user: ${userDoc.id}`)
         }
 
         // Update the user document

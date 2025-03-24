@@ -22,11 +22,6 @@ const navigationItems = [
     icon: Target,
   },
   {
-    name: "Anthropic Test",
-    path: "/anthropic",
-    icon: Zap,
-  },
-  {
     name: "Socials",
     icon: Share2,
     path: "/socials",

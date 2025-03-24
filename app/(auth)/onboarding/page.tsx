@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Check, ArrowRight, Loader2 } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useUserData } from "@/lib/hooks/useUserData"
+import type { SurveyAnswers } from "@/lib/types"
 
 // Define the types for our form data
 type OnboardingData = {
@@ -290,51 +291,87 @@ export default function OnboardingPage() {
         }
       }
 
-      const surveyData = {
+      // Core survey data that matches SurveyAnswers interface
+      const surveyData: SurveyAnswers = {
         businessType: formData.mainTopic,
-        experience: formData.creatorType,
+        mainTopic: formData.mainTopic,
+        subTopic: formData.subTopic,
         goals: [formData.goal, ...formData.challenges],
-        targetAudienceDetails: {
-          demographics: [...formData.targetAudience.ageGroups, formData.targetAudience.gender],
-          interests: [...formData.targetAudience.interests, ...formData.targetAudience.customInterests],
-          behaviors: [], // We can add this field to the form later
-          painPoints: formData.challenges
+        targetAudience: {
+          ageGroups: formData.targetAudience.ageGroups,
+          gender: formData.targetAudience.gender,
+          interests: formData.targetAudience.interests,
+          location: formData.targetAudience.location,
+          customInterests: formData.targetAudience.customInterests
         },
-        contentPreferences: {
-          preferredFormats: [], // We can add this field to the form later
-          topicAreas: [formData.mainTopic, formData.subTopic],
-          tone: "not specified", // We can add this field to the form later
-          postingFrequency: "not specified" // We can add this field to the form later
-        },
-        resources: {
-          timeAvailable: "not specified", // We can add this field to the form later
-          budget: "not specified", // We can add this field to the form later
-          team: [] // We can add this field to the form later
-        },
+        platforms: formData.currentChannels,
         challenges: formData.challenges,
-        existingPresence: {
-          platforms: formData.currentChannels,
-          followers: { total: getFollowerCount(formData.followerSize) },
-          engagement: {} // We can add this field to the form later
-        },
-        competitorInsights: {
-          mainCompetitors: [], // We can add this field to the form later
-          successfulStrategies: [], // We can add this field to the form later
-          gaps: [] // We can add this field to the form later
-        },
         surveyCompletedAt: new Date().toISOString()
       }
 
+      // Extended data for strategy generation
+      const strategyData = {
+        ...surveyData,
+        experience: formData.creatorType,
+        targetAudienceDetails: {
+          demographics: [...formData.targetAudience.ageGroups, formData.targetAudience.gender],
+          interests: [...formData.targetAudience.interests, ...formData.targetAudience.customInterests],
+          behaviors: [],
+          painPoints: formData.challenges
+        },
+        contentPreferences: {
+          preferredFormats: [],
+          topicAreas: [formData.mainTopic, formData.subTopic],
+          tone: "not specified",
+          postingFrequency: "not specified"
+        },
+        resources: {
+          timeAvailable: "not specified",
+          budget: "not specified",
+          team: []
+        },
+        existingPresence: {
+          platforms: formData.currentChannels,
+          followers: { total: getFollowerCount(formData.followerSize) },
+          engagement: {}
+        },
+        competitorInsights: {
+          mainCompetitors: [],
+          successfulStrategies: [],
+          gaps: []
+        }
+      }
+
       try {
-        // Store survey data in both localStorage and Firestore
+        // Store core survey data in both localStorage and Firestore
         localStorage.setItem("onboardingSurvey", JSON.stringify(surveyData))
         await updateSurveyAnswers(surveyData)
 
-        // Navigate to strategy page instead of dashboard
+        // Generate strategy with extended data
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+        
+        const response = await fetch('/api/strategy', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(strategyData),
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          throw new Error(`Strategy generation failed with status ${response.status}`);
+        }
+        
+        // Navigate to strategy page
         router.push("/strategy")
       } catch (error) {
-        console.error("Error saving survey data:", error)
+        console.error("Error during onboarding completion:", error)
         setIsGenerating(false)
+        alert("There was an error completing your onboarding. Please try again.")
       }
     }
   }
@@ -357,15 +394,15 @@ export default function OnboardingPage() {
           <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping"></div>
           <Loader2 className="h-16 w-16 text-primary animate-spin relative z-10" />
         </div>
-        <h1 className="text-2xl font-bold mb-2">Creating Your Social Strategy</h1>
+        <h1 className="text-2xl font-bold mb-2">Personalizing Your Dashboard</h1>
         <p className="text-muted-foreground max-w-md mb-8">
-          Our AI is analyzing your information and crafting a personalized social media strategy for your{" "}
+          We are analyzing your information and crafting a personalized social media strategy for your{" "}
           <span className="text-primary font-medium">{formData.mainTopic}</span> focus.
         </p>
         <div className="w-full max-w-md bg-muted h-3 rounded-full overflow-hidden">
           <div className="bg-primary h-full animate-pulse" style={{ width: "90%" }}></div>
         </div>
-        <div className="mt-4 text-sm text-muted-foreground">This will take just a few moments...</div>
+        <div className="mt-4 text-sm text-muted-foreground">This will just take just a few moments...</div>
       </div>
     )
   }

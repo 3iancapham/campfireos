@@ -23,9 +23,25 @@ export interface UserStrategy {
     customInterests: string[]
   }
   goal: string
-  goalDetails: string
   challenges: string[]
   generatedAt: string
+  contentStrategy: {
+    pillars: Array<{
+      name: string
+      description: string
+      themes: string[]
+    }>
+    toneAndStyle: string
+  }
+  recommendations: {
+    contentIdeas: string[]
+    postingSchedule: {
+      frequency: string
+      bestTimes: string[]
+      platforms: Record<string, string>
+    }
+    strategic: string[]
+  }
 }
 
 export interface ContentPlan {
@@ -78,35 +94,17 @@ export type Post = {
 
 export interface SurveyAnswers {
   businessType: string
-  experience: string
+  mainTopic: string
+  subTopic: string
   goals: string[]
-  targetAudienceDetails: {
-    demographics: string[]
+  targetAudience: {
+    ageGroups: string[]
+    gender: string
     interests: string[]
-    behaviors: string[]
-    painPoints: string[]
+    location: string
+    customInterests: string[]
   }
-  contentPreferences: {
-    preferredFormats: string[]
-    topicAreas: string[]
-    tone: string
-    postingFrequency: string
-  }
-  resources: {
-    timeAvailable: string
-    budget: string
-    team: string[]
-  }
+  platforms: string[]
   challenges: string[]
-  existingPresence: {
-    platforms: string[]
-    followers: Record<string, number>
-    engagement: Record<string, number>
-  }
-  competitorInsights: {
-    mainCompetitors: string[]
-    successfulStrategies: string[]
-    gaps: string[]
-  }
   surveyCompletedAt: string
 } 
